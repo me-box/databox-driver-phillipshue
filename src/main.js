@@ -5,7 +5,7 @@ const bodyParser = require('body-parser');
 const hue = require('./hue/hue.js');
 const databox = require('node-databox');
 const settingsManager = require('./settings.js');
-const fs = require('fs')
+const fs = require('fs');
 
 const DATABOX_STORE_BLOB_ENDPOINT = process.env.DATABOX_STORE_ENDPOINT;
 
@@ -31,7 +31,6 @@ app.use(bodyParser.urlencoded({ extended: false }));
 
 app.use('/status', status);
 app.use('/ui', config);
-//app.use('/ui', express.static('./static'));
 
 https.createServer(credentials, app).listen(PORT);
 
@@ -40,8 +39,8 @@ module.exports = app;
 
 var HueApi = require("node-hue-api").HueApi;
 var userConfigFile = './hue/user.json';
-var registeredLights = {} //keep track of which lights have been registered as datasources
-var registeredSensors = {} //keep track of which lights have been registered as datasources
+var registeredLights = {} //keep track of which lights have been registered as data sources
+var registeredSensors = {} //keep track of which sensors have been registered as data sources
 var vendor = "Philips Hue";
 
 
@@ -92,9 +91,6 @@ databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
 
         hue.setLights(hueId,hueType,data.data);
 
-      })
-      .catch((err)=>{
-        console.log("[Actuation connect error]",err);
       });
     });
 
@@ -104,7 +100,7 @@ databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
 
         hueApi.lights()
         .then((lights)=>{
-           //Update available datasources
+           //Update available data sources
             lights.lights.forEach((light)=>{
 
               if( !(light.id in registeredLights)) {
@@ -112,7 +108,7 @@ databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
                 console.log("[NEW BULB FOUND] " + light.id + " " + light.name);
                 registeredLights[light.id] = light.id;
 
-                //register datasources
+                //register data sources
                 databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
                   description: light.name + ' on off state.',
                   contentType: 'text/json',
@@ -242,32 +238,43 @@ databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
         });
 
         //deal with sensors
+        function formatSensorID(id) {
+          return id.replace(/\W+/g,"").trim();
+        }
+
         hueApi.sensors()
           .then((sensors)=>{
-            sensors.sensors.forEach((sensor)=>{
+            sensors.sensors.filter((itm)=>{ return itm.uniqueid }).forEach((sensor)=>{
 
-              if( !(sensor.id in registeredSensors)) {
+              if( !(sensor.uniqueid in registeredSensors)) {
                 //new light found
-                console.log("[NEW SENSOR FOUND] " + sensor.uniqueid + " " + sensor.name);
+                console.log("[NEW SENSOR FOUND] " + formatSensorID(sensor.uniqueid) + " " + sensor.name);
                 registeredSensors[sensor.uniqueid] = sensor.uniqueid;
 
-                //register datasources
+                //register data sources
                 databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
                   description: sensor.name + sensor.type,
                   contentType: 'text/json',
                   vendor: vendor,
                   type: 'hue-'+sensor.type,
-                  datasourceid: 'hue-'+sensor.id,
+                  datasourceid: 'hue-'+formatSensorID(sensor.uniqueid),
                   storeType: 'databox-store-blob'
+                })
+                .catch((error)=>{
+                  console.log("[ERROR] register sensor", error);
                 });
               } else {
                 // update state
-                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'hue-'+sensor.id,sensor.state);
+                console.log("WRITING SENSOR DATA::",DATABOX_STORE_BLOB_ENDPOINT, 'hue-'+formatSensorID(sensor.uniqueid),sensor.state);
+                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'hue-'+formatSensorID(sensor.uniqueid),sensor.state)
+                .catch((error)=>{
+                  console.log("[ERROR] writing sensor data", error);
+                });
               }
             })
           })
           .catch((error)=>{
-            console.log("[ERROR]", error);
+            console.log("[ERROR] Querying sensors", error);
           });
 
         //setup next poll
