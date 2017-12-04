@@ -2,7 +2,7 @@
 	"manifest-version": 1,
 
 	"name": "driver-phillips-hue",
-	"version": "0.1.0",
+	"version": "0.3.0",
 
 	"description": "A Databox driver for the phillips hue lights",
 	"author": "James Colley <James.Colley@nottingham.ac.uk> ()",
@@ -22,5 +22,5 @@
 
 
 	"resource-requirements": {
-    "store":"store-json"}
+    "store":"core-store"}
 }

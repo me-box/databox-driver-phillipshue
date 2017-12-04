@@ -2,19 +2,20 @@
 const express = require('express');
 const path = require('path');
 const bodyParser = require('body-parser');
-const hue = require('./hue/hue.js');
 const databox = require('node-databox');
-const settingsManager = require('./settings.js');
 const fs = require('fs');
 
-const DATABOX_STORE_BLOB_ENDPOINT = process.env.DATABOX_STORE_ENDPOINT;
+const DATABOX_ZMQ_ENDPOINT = process.env.DATABOX_ZMQ_ENDPOINT
+
+let tsc = databox.NewTimeSeriesClient(DATABOX_ZMQ_ENDPOINT, false);
+let kvc = databox.NewKeyValueClient(DATABOX_ZMQ_ENDPOINT, false);
+
+const settingsManager = require('./settings.js')(kvc);
+const hue = require('./hue/hue.js')(settingsManager);
 
 const credentials = databox.getHttpsCredentials();
 
 const PORT = process.env.port || '8080';
-
-const config = require('./routes/config');
-const status = require('./routes/status');
 
 const app = express();
 
@@ -29,8 +30,32 @@ app.set('view engine', 'jade');
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 
-app.use('/status', status);
-app.use('/ui', config);
+
+app.get('/status', function(req, res, next) {
+
+    res.send("active");
+
+});
+
+app.get('/ui', function(req, res, next) {
+	console.log("res.render('config', {})");
+  res.render('config', {});
+});
+
+app.post('/ui', function (req, res) {
+    var ip_address = (req.body.title);
+
+    console.log(req.body.title);
+
+    hue.findHub(ip_address)
+    .then((data)=>{
+       res.send(data);
+    })
+    .catch((err)=>{
+       res.status(401).send("Failed to find hue bridge at " + ip_address + "<b>" + err + "</b>");
+    });
+
+});
 
 https.createServer(credentials, app).listen(PORT);
 
@@ -38,22 +63,47 @@ module.exports = app;
 
 
 var HueApi = require("node-hue-api").HueApi;
-var userConfigFile = './hue/user.json';
+
 var registeredLights = {} //keep track of which lights have been registered as data sources
 var registeredSensors = {} //keep track of which sensors have been registered as data sources
 var vendor = "Philips Hue";
 
 
-databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
+
+function ObserveProperty (dsID) {
+
+  //Deal with actuation events
+  kvc.Observe(dsID)
+  .then((actuationEmitter)=>{
+    actuationEmitter.on('data',(data)=>{
+      console.log("[Actuation] data received",dsID, data);
+
+      const tmp = dsID.split('-');
+      const hueType = tmp[2];
+      const hueId = tmp[3];
+
+      hue.setLights(hueId,hueType,data.data);
+
+    });
+
+    actuationEmitter.on('error',(error)=>{
+      console.log("[warn] error received",dsID, error);
+    });
+
+  });
+
+}
+
+Promise.resolve()
   .then(()=>{
-    return databox.catalog.registerDatasource(
-              DATABOX_STORE_BLOB_ENDPOINT, {
-              description: 'Philips hue driver settings',
-              contentType: 'text/json',
-              vendor: 'Databox Inc.',
-              type: 'philipsHueSettings',
-              datasourceid: 'philipsHueSettings',
-              storeType: 'databox-store-blob',
+    return tsc.RegisterDatasource(
+              {
+              Description: 'Philips hue driver settings',
+              ContentType: 'text/json',
+              Vendor: 'Databox Inc.',
+              DataSourceType: 'philipsHueSettings',
+              DataSourceID: 'philipsHueSettings',
+              StoreType: 'kv',
             });
   })
   .then(()=>{
@@ -79,22 +129,6 @@ databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
   })
   .then((hueApi)=>{
 
-    //Deal with actuation events
-    databox.subscriptions.connect(DATABOX_STORE_BLOB_ENDPOINT)
-    .then((actuationEmitter)=>{
-      actuationEmitter.on('data',(endpointHost, actuatorId, data)=>{
-        console.log("[Actuation] data received",endpointHost, actuatorId, data);
-
-        const tmp = actuatorId.split('-');
-        const hueType = tmp[2];
-        const hueId = tmp[3];
-
-        hue.setLights(hueId,hueType,data.data);
-
-      });
-    });
-
-
     //Look for new lights and update light states
     var infinitePoll = function() {
 
@@ -109,124 +143,125 @@ databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
                 registeredLights[light.id] = light.id;
 
                 //register data sources
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: light.name + ' on off state.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'bulb-on',
-                  datasourceid: 'bulb-on-' + light.id,
-                  storeType: 'databox-store-blob'
+                tsc.RegisterDatasource({
+                  Description: light.name + ' on off state.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'bulb-on',
+                  DataSourceID: 'bulb-on-' + light.id,
+                  StoreType: 'ts'
                 });
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: light.name + ' hue value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'bulb-hue',
-                  datasourceid: 'bulb-hue-' + light.id,
-                  storeType: 'databox-store-blob'
+                tsc.RegisterDatasource({
+                  Description: light.name + ' hue value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'bulb-hue',
+                  DataSourceID: 'bulb-hue-' + light.id,
+                  StoreType: 'ts'
                 });
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: light.name + ' brightness value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'bulb-bri',
-                  datasourceid: 'bulb-bri-' + light.id,
-                  storeType: 'databox-store-blob'
+                tsc.RegisterDatasource({
+                  Description: light.name + ' brightness value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'bulb-bri',
+                  DataSourceID: 'bulb-bri-' + light.id,
+                  StoreType: 'ts'
                 });
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: light.name + ' saturation value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'bulb-sat',
-                  datasourceid: 'bulb-sat-' + light.id,
-                  storeType: 'databox-store-blob'
+                tsc.RegisterDatasource({
+                  Description: light.name + ' saturation value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'bulb-sat',
+                  DataSourceID: 'bulb-sat-' + light.id,
+                  StoreType: 'ts'
                 });
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: light.name + ' color temperature value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'bulb-ct',
-                  datasourceid: 'bulb-ct' + light.id,
-                  storeType: 'databox-store-blob'
+                tsc.RegisterDatasource({
+                  Description: light.name + ' color temperature value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'bulb-ct',
+                  DataSourceID: 'bulb-ct' + light.id,
+                  StoreType: 'ts'
                 });
 
                 //register actuators
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: 'Set ' + light.name + ' bulbs on off state.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'set-bulb-on',
-                  datasourceid: 'set-bulb-on-' + light.id,
-                  storeType: 'databox-store-blob',
+                tsc.RegisterDatasource({
+                  Description: 'Set ' + light.name + ' bulbs on off state.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'set-bulb-on',
+                  DataSourceID: 'set-bulb-on-' + light.id,
+                  StoreType: 'ts',
                   isActuator:true
                 })
                 .then(()=>{
-                  databox.subscriptions.subscribe(DATABOX_STORE_BLOB_ENDPOINT,'set-bulb-on-' + light.id,'ts');
+                  ObserveProperty('set-bulb-on-' + light.id);
                 })
                 .catch((err)=>{
                   console.log("[Error] registering actuator ", err);
                 });
 
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: 'Set ' + light.name + ' hue value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'set-bulb-hue',
-                  datasourceid: 'set-bulb-hue-' + light.id,
-                  storeType: 'databox-store-blob',
+                tsc.RegisterDatasource({
+                  Description: 'Set ' + light.name + ' hue value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'set-bulb-hue',
+                  DataSourceID: 'set-bulb-hue-' + light.id,
+                  StoreType: 'ts',
                   isActuator:true
                 })
                 .then(()=>{
-                  databox.subscriptions.subscribe(DATABOX_STORE_BLOB_ENDPOINT,'set-bulb-hue-' + light.id,'ts');
+                  ObserveProperty('set-bulb-hue-' + light.id);
                 });
 
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description:'Set ' + light.name + ' brightness value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'set-bulb-bri',
-                  datasourceid: 'set-bulb-bri-' + light.id,
-                  storeType: 'databox-store-blob',
+                tsc.RegisterDatasource({
+                  Description:'Set ' + light.name + ' brightness value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'set-bulb-bri',
+                  DataSourceID: 'set-bulb-bri-' + light.id,
+                  StoreType: 'ts',
                   isActuator:true
                 })
                 .then(()=>{
-                  databox.subscriptions.subscribe(DATABOX_STORE_BLOB_ENDPOINT,'set-bulb-bri-' + light.id,'ts');
+                  ObserveProperty('set-bulb-bri-' + light.id);
                 });
 
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: 'Set ' + light.name + ' saturation value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'set-bulb-sat',
-                  datasourceid: 'set-bulb-sat-' + light.id,
-                  storeType: 'databox-store-blob',
+                tsc.RegisterDatasource({
+                  Description: 'Set ' + light.name + ' saturation value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'set-bulb-sat',
+                  DataSourceID: 'set-bulb-sat-' + light.id,
+                  StoreType: 'ts',
                   isActuator:true
                 })
                 .then(()=>{
-                  databox.subscriptions.subscribe(DATABOX_STORE_BLOB_ENDPOINT,'set-bulb-sat-' + light.id,'ts');
+                  ObserveProperty('set-bulb-sat-' + light.id);
                 });
 
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: 'Set ' + light.name + ' color temperature value.',
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'set-bulb-ct',
-                  datasourceid: 'set-bulb-ct' + light.id,
-                  storeType: 'databox-store-blob',
+                tsc.RegisterDatasource({
+                  Description: 'Set ' + light.name + ' color temperature value.',
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'set-bulb-ct',
+                  DataSourceID: 'set-bulb-ct' + light.id,
+                  StoreType: 'ts',
                   isActuator:true
                 })
                 .then(()=>{
-                  databox.subscriptions.subscribe(DATABOX_STORE_BLOB_ENDPOINT,'set-bulb-ct-' + light.id,'ts');
+                  ObserveProperty('set-bulb-ct-' + light.id);
                 });
 
               } else {
 
                 //Update bulb state
-                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'bulb-on-'  + light.id, light.state.on);
-                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'bulb-hue-' + light.id, light.state.hue);
-                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'bulb-bri-' + light.id, light.state.bri);
-                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'bulb-sat-' + light.id, light.state.sat);
-                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'bulb-ct-'  + light.id, light.state.ct);
+                console.log("WRITING for bulb", light.id, " Values::", light.state.on, light.state.hue, light.state.bri,light.state.sat,light.state.ct);
+                tsc.Write('bulb-on-'  + light.id, { data:light.state.on });
+                tsc.Write('bulb-hue-' + light.id, { data:light.state.hue });
+                tsc.Write('bulb-bri-' + light.id, { data:light.state.bri });
+                tsc.Write('bulb-sat-' + light.id, { data:light.state.sat });
+                tsc.Write('bulb-ct-'  + light.id, { data:light.state.ct });
 
               }
 
@@ -252,21 +287,21 @@ databox.waitForStoreStatus(DATABOX_STORE_BLOB_ENDPOINT,'active',10)
                 registeredSensors[sensor.uniqueid] = sensor.uniqueid;
 
                 //register data sources
-                databox.catalog.registerDatasource(DATABOX_STORE_BLOB_ENDPOINT,{
-                  description: sensor.name + sensor.type,
-                  contentType: 'text/json',
-                  vendor: vendor,
-                  type: 'hue-'+sensor.type,
-                  datasourceid: 'hue-'+formatSensorID(sensor.uniqueid),
-                  storeType: 'databox-store-blob'
+                tsc.RegisterDatasource({
+                  Description: sensor.name + sensor.type,
+                  ContentType: 'text/json',
+                  Vendor: vendor,
+                  DataSourceType: 'hue-'+sensor.type,
+                  DataSourceID: 'hue-'+formatSensorID(sensor.uniqueid),
+                  StoreType: 'ts'
                 })
                 .catch((error)=>{
                   console.log("[ERROR] register sensor", error);
                 });
               } else {
                 // update state
-                console.log("WRITING SENSOR DATA::",DATABOX_STORE_BLOB_ENDPOINT, 'hue-'+formatSensorID(sensor.uniqueid),sensor.state);
-                databox.timeseries.write(DATABOX_STORE_BLOB_ENDPOINT, 'hue-'+formatSensorID(sensor.uniqueid),sensor.state)
+                console.log("WRITING SENSOR DATA::", 'hue-'+formatSensorID(sensor.uniqueid),sensor.state);
+                tsc.Write('hue-'+formatSensorID(sensor.uniqueid),sensor.state)
                 .catch((error)=>{
                   console.log("[ERROR] writing sensor data", error);
                 });

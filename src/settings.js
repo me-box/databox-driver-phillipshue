@@ -1,46 +1,55 @@
 
-var databox = require('node-databox');
+const databox = require('node-databox');
 
-var endpoint = process.env.DATABOX_STORE_ENDPOINT;
-var datasourceid = 'philipsHueSettings';
+const datasourceid = 'philipsHueSettings';
 
-var settingsCache = null;
+let settingsCache = null;
 
-module.exports.getSettings = () => {
- return new Promise((resolve,reject)=>{
+module.exports = (keyValueClient) => {
 
-   if(settingsCache !== null) {
-     resolve(settingsCache);
-   }
+  let kvc = keyValueClient;
 
-   databox.keyValue.read(endpoint,datasourceid)
-   .then((settings)=>{
-     if(settings.status && settings.status == 404) {
-      return Promise.reject('No setting found.');
-     }
-     console.log("[getSettings]",settings);
-     settingsCache = settings;
-     resolve(settings);
-   })
-   .catch((err)=>{
-     reject(err);
-   });
+  let getSettings = () => {
+  return new Promise((resolve,reject)=>{
 
- });
-}
+    if(settingsCache !== null) {
+      resolve(settingsCache);
+    }
 
-module.exports.setSettings = (settings) => {
- 
- //to do validate settings
- return new Promise((resolve,reject)=>{
-   databox.keyValue.write(endpoint,datasourceid,settings)
-   .then(()=>{
-     settingsCache = settings;
-     resolve(settings);
-   })
-   .catch((err)=>{
-     reject(err);
-   });
+    kvc.Read(datasourceid)
+    .then((settings)=>{
+      if(sObject.keys(settings).length == 0) {
+        return Promise.reject('No setting found.');
+      }
+      console.log("[getSettings]",settings);
+      settingsCache = settings;
+      resolve(settings);
+    })
+    .catch((err)=>{
+      reject(err);
+    });
 
- });
+  });
+  };
+
+  let setSettings = (settings) => {
+
+  //to do validate settings
+  return new Promise((resolve,reject)=>{
+    kvc.Write(datasourceid,settings)
+    .then(()=>{
+      settingsCache = settings;
+      resolve(settings);
+    })
+    .catch((err)=>{
+      reject(err);
+    });
+
+  });
+  };
+
+  return {
+    getSettings:getSettings,
+    setSettings:setSettings
+  }
 };
