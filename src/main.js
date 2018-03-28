@@ -7,7 +7,7 @@ const fs = require('fs');
 
 const DATABOX_ZMQ_ENDPOINT = process.env.DATABOX_ZMQ_ENDPOINT
 
-let tsc = databox.NewTimeSeriesClient(DATABOX_ZMQ_ENDPOINT, false);
+let tsc = databox.NewTimeSeriesBlobClient(DATABOX_ZMQ_ENDPOINT, false);
 let kvc = databox.NewKeyValueClient(DATABOX_ZMQ_ENDPOINT, false);
 
 const settingsManager = require('./settings.js')(kvc);
@@ -78,13 +78,13 @@ function ObserveProperty (dsID) {
   tsc.Observe(dsID)
   .then((actuationEmitter)=>{
 
-    actuationEmitter.on('data',(data)=>{
-      console.log("[Actuation] data received",dsID, data);
+    actuationEmitter.on('data',(JsonObserveResponse)=>{
+      console.log("[Actuation] data received",dsID, JsonObserveResponse.data);
 
       const tmp = dsID.split('-');
       const hueType = tmp[2];
       const hueId = tmp[3];
-      _data = JSON.parse(data);
+      _data = JSON.parse(JsonObserveResponse.data);
       hue.setLights(hueId,hueType,_data.data);
 
     });
