@@ -16,7 +16,7 @@ module.exports = (keyValueClient) => {
       resolve(settingsCache);
     }
 
-    kvc.Read(datasourceid)
+    kvc.Read(datasourceid, "settings")
     .then((settings)=>{
       if(sObject.keys(settings).length == 0) {
         return Promise.reject('No setting found.');
@@ -36,7 +36,7 @@ module.exports = (keyValueClient) => {
 
   //to do validate settings
   return new Promise((resolve,reject)=>{
-    kvc.Write(datasourceid,settings)
+    kvc.Write(datasourceid,"settings",settings)
     .then(()=>{
       settingsCache = settings;
       resolve(settings);
