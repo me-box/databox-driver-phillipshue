@@ -21,9 +21,15 @@ const app = express();
 
 const https = require('https');
 
+//some nasty global vars to holds the current state
+var registeredLights = {} //keep track of which lights have been registered as data sources
+var registeredSensors = {} //keep track of which sensors have been registered as data sources
+var vendor = "Philips Hue";
+
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'jade');
+app.set("configured",false)
 
 
 // app setup
@@ -32,14 +38,29 @@ app.use(bodyParser.urlencoded({ extended: false }));
 
 
 app.get('/status', function(req, res, next) {
-
-    res.send("active");
-
+    if (app.settings.configured) {
+      res.send("active");
+    } else {
+      res.send("requiresConfig");
+    }
 });
 
 app.get('/ui', function(req, res, next) {
-	console.log("res.render('config', {})");
-  res.render('config', {});
+  if (app.settings.configured) {
+    let bulbList = ""
+    let lights = Object.entries(registeredLights)
+    if(lights.length > 0) {
+      bulbList = lights.map((bulb)=>{
+        return "<li><b>"+ bulb[1].name + "</b> Last value: <pre>"+JSON.stringify(bulb[1].state,null,3)+"</pre></li>"
+      });
+    } else {
+      bulbList=["<li>No bulbs found!</li>"]
+    }
+    res.send("<h1>Lights</h1><div id='bulbs'><ul>"+bulbList.concat(" \n")+"</ul></div>");
+  } else {
+    console.log("res.render('config', {})");
+    res.render('config', {});
+  }
 });
 
 app.post('/ui', function (req, res) {
@@ -63,12 +84,6 @@ module.exports = app;
 
 
 var HueApi = require("node-hue-api").HueApi;
-
-var registeredLights = {} //keep track of which lights have been registered as data sources
-var registeredSensors = {} //keep track of which sensors have been registered as data sources
-var vendor = "Philips Hue";
-
-
 
 function ObserveProperty (dsID) {
 
@@ -123,7 +138,7 @@ Promise.resolve()
             resolve(new HueApi(settings.hostname, settings.hash));
           })
           .catch((err)=>{
-            console.log("[waitForConfig] waiting for user configuration");
+            console.log("[waitForConfig] waiting for user configuration. ", err);
             setTimeout(waitForConfig,5000);
           });
 
@@ -134,6 +149,8 @@ Promise.resolve()
 
   })
   .then((hueApi)=>{
+
+    app.set("configured",true)
 
     //Look for new lights and update light states
     var infinitePoll = function() {
@@ -146,7 +163,9 @@ Promise.resolve()
               if( !(light.uniqueid in registeredLights)) {
                 //new light found
                 console.log("[NEW BULB FOUND] " + light.uniqueid + " " + light.name);
-                registeredLights[light.uniqueid] = light.uniqueid;
+
+                //build the current state for the UI
+                registeredLights[light.uniqueid] = light;
 
                 //register data sources
                 tsc.RegisterDatasource({
@@ -277,6 +296,9 @@ Promise.resolve()
 
               } else {
 
+                //build the current state for the UI
+                registeredLights[light.uniqueid] = light;
+
                 //Update bulb state
                 tsc.Write('bulb-on-'  + lightID, { data:light.state.on })
                .then(()=>{
@@ -317,7 +339,7 @@ Promise.resolve()
               if( !(sensor.uniqueid in registeredSensors)) {
                 //new light found
                 console.log("[NEW SENSOR FOUND] " + formatID(sensor.uniqueid) + " " + sensor.name);
-                registeredSensors[sensor.uniqueid] = sensor.uniqueid;
+                registeredSensors[sensor.uniqueid] = sensor;
 
                 //register data sources
                 tsc.RegisterDatasource({
@@ -332,6 +354,9 @@ Promise.resolve()
                   console.log("[ERROR] register sensor", error);
                 });
               } else {
+
+                registeredSensors[sensor.uniqueid] = sensor;
+
                 // update state
                 tsc.Write('hue-'+formatID(sensor.uniqueid),sensor.state)
                 .catch((error)=>{
