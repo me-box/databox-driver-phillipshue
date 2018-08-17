@@ -21,9 +21,15 @@ const app = express();
 
 const https = require('https');
 
+//some nasty global vars to holds the current state
+var registeredLights = {} //keep track of which lights have been registered as data sources
+var registeredSensors = {} //keep track of which sensors have been registered as data sources
+var vendor = "Philips Hue";
+
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'jade');
+app.set("configured",false)
 
 
 // app setup
@@ -32,14 +38,29 @@ app.use(bodyParser.urlencoded({ extended: false }));
 
 
 app.get('/status', function(req, res, next) {
-
-    res.send("active");
-
+    if (app.settings.configured) {
+      res.send("active");
+    } else {
+      res.send("requiresConfig");
+    }
 });
 
 app.get('/ui', function(req, res, next) {
-	console.log("res.render('config', {})");
-  res.render('config', {});
+  if (app.settings.configured) {
+    let bulbList = ""
+    let lights = Object.entries(registeredLights)
+    if(lights.length > 0) {
+      bulbList = lights.map((bulb)=>{
+        return "<li><b>"+ bulb[1].name + "</b> Last value: <pre>"+JSON.stringify(bulb[1].state,null,3)+"</pre></li>"
+      });
+    } else {
+      bulbList=["<li>No bulbs found!</li>"]
+    }
+    res.send("<h1>Lights</h1><div id='bulbs'><ul>"+bulbList.concat(" \n")+"</ul></div>");
+  } else {
+    console.log("res.render('config', {})");
+    res.render('config', {});
+  }
 });
 
 app.post('/ui', function (req, res) {
@@ -64,18 +85,12 @@ module.exports = app;
 
 var HueApi = require("node-hue-api").HueApi;
 
-var registeredLights = {} //keep track of which lights have been registered as data sources
-var registeredSensors = {} //keep track of which sensors have been registered as data sources
-var vendor = "Philips Hue";
-
-
-
 function ObserveProperty (dsID) {
 
   console.log("[Observing] ",dsID);
 
   //Deal with actuation events
-  tsc.Observe(dsID)
+  return tsc.Observe(dsID)
   .then((actuationEmitter)=>{
 
     actuationEmitter.on('data',(JsonObserveResponse)=>{
@@ -123,7 +138,7 @@ Promise.resolve()
             resolve(new HueApi(settings.hostname, settings.hash));
           })
           .catch((err)=>{
-            console.log("[waitForConfig] waiting for user configuration");
+            console.log("[waitForConfig] waiting for user configuration. ", err);
             setTimeout(waitForConfig,5000);
           });
 
@@ -135,18 +150,22 @@ Promise.resolve()
   })
   .then((hueApi)=>{
 
+    app.set("configured",true)
+
     //Look for new lights and update light states
     var infinitePoll = function() {
 
         hueApi.lights()
         .then((lights)=>{
            //Update available data sources
-            lights.lights.forEach((light)=>{
+            lights.lights.forEach((light, lightID)=>{
 
-              if( !(light.id in registeredLights)) {
+              if( !(light.uniqueid in registeredLights)) {
                 //new light found
-                console.log("[NEW BULB FOUND] " + light.id + " " + light.name);
-                registeredLights[light.id] = light.id;
+                console.log("[NEW BULB FOUND] " + light.uniqueid + " " + light.name);
+
+                //build the current state for the UI
+                registeredLights[light.uniqueid] = light;
 
                 //register data sources
                 tsc.RegisterDatasource({
@@ -154,7 +173,7 @@ Promise.resolve()
                   ContentType: 'text/json',
                   Vendor: vendor,
                   DataSourceType: 'bulb-on',
-                  DataSourceID: 'bulb-on-' + light.id,
+                  DataSourceID: 'bulb-on-' + lightID,
                   StoreType: 'ts'
                 })
                 .then(()=>{
@@ -163,7 +182,7 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'bulb-hue',
-                    DataSourceID: 'bulb-hue-' + light.id,
+                    DataSourceID: 'bulb-hue-' + lightID,
                     StoreType: 'ts'
                   });
                 })
@@ -173,7 +192,7 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'bulb-bri',
-                    DataSourceID: 'bulb-bri-' + light.id,
+                    DataSourceID: 'bulb-bri-' + lightID,
                     StoreType: 'ts'
                   });
                 })
@@ -183,7 +202,7 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'bulb-sat',
-                    DataSourceID: 'bulb-sat-' + light.id,
+                    DataSourceID: 'bulb-sat-' + lightID,
                     StoreType: 'ts'
                   });
                 })
@@ -193,7 +212,7 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'bulb-ct',
-                    DataSourceID: 'bulb-ct' + light.id,
+                    DataSourceID: 'bulb-ct-' + lightID,
                     StoreType: 'ts'
                   });
                 })
@@ -203,12 +222,12 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-on',
-                    DataSourceID: 'set-bulb-on-' + light.id,
+                    DataSourceID: 'set-bulb-on-' + lightID,
                     StoreType: 'ts',
                     IsActuator:true
                   })
                   .then(()=>{
-                    ObserveProperty('set-bulb-on-' + light.id);
+                    return ObserveProperty('set-bulb-on-' + lightID);
                   })
                   .catch((err)=>{
                     console.warn(err)
@@ -221,12 +240,12 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-hue',
-                    DataSourceID: 'set-bulb-hue-' + light.id,
+                    DataSourceID: 'set-bulb-hue-' + lightID,
                     StoreType: 'ts',
                     IsActuator:true
                   })
                   .then(()=>{
-                    ObserveProperty('set-bulb-hue-' + light.id);
+                    return ObserveProperty('set-bulb-hue-' + lightID);
                   });
                 })
                 .then(()=>{
@@ -235,12 +254,12 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-bri',
-                    DataSourceID: 'set-bulb-bri-' + light.id,
+                    DataSourceID: 'set-bulb-bri-' + lightID,
                     StoreType: 'ts',
                     IsActuator:true
                   })
                   .then(()=>{
-                    ObserveProperty('set-bulb-bri-' + light.id);
+                    return ObserveProperty('set-bulb-bri-' + lightID);
                   });
                 })
                 .then(()=>{
@@ -249,12 +268,12 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-sat',
-                    DataSourceID: 'set-bulb-sat-' + light.id,
+                    DataSourceID: 'set-bulb-sat-' + lightID,
                     StoreType: 'ts',
                     IsActuator:true
                   })
                   .then(()=>{
-                    ObserveProperty('set-bulb-sat-' + light.id);
+                    return ObserveProperty('set-bulb-sat-' + lightID);
                   });
                 })
                 .then(()=>{
@@ -263,12 +282,12 @@ Promise.resolve()
                     ContentType: 'text/json',
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-ct',
-                    DataSourceID: 'set-bulb-ct' + light.id,
+                    DataSourceID: 'set-bulb-ct-' + lightID,
                     StoreType: 'ts',
                     IsActuator:true
                   })
                   .then(()=>{
-                    ObserveProperty('set-bulb-ct-' + light.id);
+                    return ObserveProperty('set-bulb-ct-' + lightID);
                   });
                 })
                 .catch((err)=>{
@@ -277,12 +296,27 @@ Promise.resolve()
 
               } else {
 
+                //build the current state for the UI
+                registeredLights[light.uniqueid] = light;
+
                 //Update bulb state
-                tsc.Write('bulb-on-'  + light.id, { data:light.state.on });
-                tsc.Write('bulb-hue-' + light.id, { data:light.state.hue });
-                tsc.Write('bulb-bri-' + light.id, { data:light.state.bri });
-                tsc.Write('bulb-sat-' + light.id, { data:light.state.sat });
-                tsc.Write('bulb-ct-'  + light.id, { data:light.state.ct });
+                tsc.Write('bulb-on-'  + lightID, { data:light.state.on })
+               .then(()=>{
+                  return tsc.Write('bulb-hue-' + lightID, { data:light.state.hue });
+                })
+                .then(()=>{
+                  return tsc.Write('bulb-bri-' + lightID, { data:light.state.bri });
+                })
+                .then(()=>{
+                  return tsc.Write('bulb-sat-' + lightID, { data:light.state.sat });
+                })
+                .then(()=>{
+                  return tsc.Write('bulb-ct-'  + lightID, { data:light.state.ct });
+                })
+                .catch((err)=>{
+                  console.log("Error witting to store ", err)
+                })
+
 
               }
 
@@ -294,7 +328,7 @@ Promise.resolve()
         });
 
         //deal with sensors
-        function formatSensorID(id) {
+        function formatID(id) {
           return id.replace(/\W+/g,"").trim();
         }
 
@@ -304,8 +338,8 @@ Promise.resolve()
 
               if( !(sensor.uniqueid in registeredSensors)) {
                 //new light found
-                console.log("[NEW SENSOR FOUND] " + formatSensorID(sensor.uniqueid) + " " + sensor.name);
-                registeredSensors[sensor.uniqueid] = sensor.uniqueid;
+                console.log("[NEW SENSOR FOUND] " + formatID(sensor.uniqueid) + " " + sensor.name);
+                registeredSensors[sensor.uniqueid] = sensor;
 
                 //register data sources
                 tsc.RegisterDatasource({
@@ -313,15 +347,18 @@ Promise.resolve()
                   ContentType: 'text/json',
                   Vendor: vendor,
                   DataSourceType: 'hue-'+sensor.type,
-                  DataSourceID: 'hue-'+formatSensorID(sensor.uniqueid),
+                  DataSourceID: 'hue-'+formatID(sensor.uniqueid),
                   StoreType: 'ts'
                 })
                 .catch((error)=>{
                   console.log("[ERROR] register sensor", error);
                 });
               } else {
+
+                registeredSensors[sensor.uniqueid] = sensor;
+
                 // update state
-                tsc.Write('hue-'+formatSensorID(sensor.uniqueid),sensor.state)
+                tsc.Write('hue-'+formatID(sensor.uniqueid),sensor.state)
                 .catch((error)=>{
                   console.log("[ERROR] writing sensor data", error);
                 });
