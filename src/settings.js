@@ -11,7 +11,7 @@ module.exports = (keyValueClient) => {
 
   let getSettings = () => {
     return new Promise((resolve,reject)=>{
-      kvc.Read(datasourceid, "settings")
+      kvc.Read(datasourceid, settingKey)
       .then((settings)=>{
         if(Object.keys(settings).length == 0) {
           return Promise.reject('No setting found.');
@@ -30,7 +30,7 @@ module.exports = (keyValueClient) => {
   let setSettings = (settings) => {
     //to do validate settings
     return new Promise((resolve,reject)=>{
-      kvc.Write(datasourceid,"settingKey",settings)
+      kvc.Write(datasourceid,settingKey,settings)
       .then(()=>{
         resolve(settings);
       })
