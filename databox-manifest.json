@@ -22,5 +22,86 @@
 
 
 	"resource-requirements": {
-    "store":"core-store"}
+		"store":"core-store"
+	},
+    "provides": [
+		{
+			"data-source-type": "bulb-on",
+			"description": "bulb on state",
+			"store-type": "tsblob",
+			"schema": {}
+		},
+		{
+			"data-source-type": "bulb-hue",
+			"description": "bulb hue value",
+			"store-type": "tsblob",
+			"schema": {}
+		},
+		{
+			"data-source-type": "bulb-bri",
+			"description": "bulb brightness value",
+			"store-type": "tsblob",
+			"schema": {}
+		},
+		{
+			"data-source-type": "bulb-sat",
+			"description": "bulb saturation value",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "bulb-ct",
+			"description": "bulb color temperature value",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "set-bulb-on",
+			"description": "Set bulbs on off state",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "set-bulb-hue",
+			"description": "Set bulbs hue value",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "set-bulb-bri",
+			"description": "Set bulbs brightness",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "set-bulb-sat",
+			"description": "Set bulbs saturation value",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "set-bulb-ct",
+			"description": "Set bulb color temperature value",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "hue-ZLLTemperature",
+			"description": "Hue temperature sensor value",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "hue-ZLLPresence",
+			"description": "Hue presence sensor",
+			"store-type": "tsblob",
+			"schema": {}
+        },
+		{
+			"data-source-type": "hue-ZLLLightLevel",
+			"description": "Hue light level sensor",
+			"store-type": "tsblob",
+			"schema": {}
+        }
+    ]
 }
