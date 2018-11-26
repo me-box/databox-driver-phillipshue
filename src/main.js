@@ -174,7 +174,7 @@ Promise.resolve()
                   Vendor: vendor,
                   DataSourceType: 'bulb-on',
                   DataSourceID: 'bulb-on-' + lightID,
-                  StoreType: 'ts'
+                  StoreType: 'tsblob'
                 })
                 .then(()=>{
                   return tsc.RegisterDatasource({
@@ -183,7 +183,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'bulb-hue',
                     DataSourceID: 'bulb-hue-' + lightID,
-                    StoreType: 'ts'
+                    StoreType: 'tsblob'
                   });
                 })
                 .then(()=>{
@@ -193,7 +193,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'bulb-bri',
                     DataSourceID: 'bulb-bri-' + lightID,
-                    StoreType: 'ts'
+                    StoreType: 'tsblob'
                   });
                 })
                 .then(()=>{
@@ -203,7 +203,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'bulb-sat',
                     DataSourceID: 'bulb-sat-' + lightID,
-                    StoreType: 'ts'
+                    StoreType: 'tsblob'
                   });
                 })
                 .then(()=>{
@@ -213,7 +213,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'bulb-ct',
                     DataSourceID: 'bulb-ct-' + lightID,
-                    StoreType: 'ts'
+                    StoreType: 'tsblob'
                   });
                 })
                 .then(()=>{
@@ -223,7 +223,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-on',
                     DataSourceID: 'set-bulb-on-' + lightID,
-                    StoreType: 'ts',
+                    StoreType: 'tsblob',
                     IsActuator:true
                   })
                   .then(()=>{
@@ -241,7 +241,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-hue',
                     DataSourceID: 'set-bulb-hue-' + lightID,
-                    StoreType: 'ts',
+                    StoreType: 'tsblob',
                     IsActuator:true
                   })
                   .then(()=>{
@@ -255,7 +255,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-bri',
                     DataSourceID: 'set-bulb-bri-' + lightID,
-                    StoreType: 'ts',
+                    StoreType: 'tsblob',
                     IsActuator:true
                   })
                   .then(()=>{
@@ -269,7 +269,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-sat',
                     DataSourceID: 'set-bulb-sat-' + lightID,
-                    StoreType: 'ts',
+                    StoreType: 'tsblob',
                     IsActuator:true
                   })
                   .then(()=>{
@@ -283,7 +283,7 @@ Promise.resolve()
                     Vendor: vendor,
                     DataSourceType: 'set-bulb-ct',
                     DataSourceID: 'set-bulb-ct-' + lightID,
-                    StoreType: 'ts',
+                    StoreType: 'tsblob',
                     IsActuator:true
                   })
                   .then(()=>{
