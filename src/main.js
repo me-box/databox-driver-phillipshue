@@ -26,9 +26,7 @@ var registeredLights = {} //keep track of which lights have been registered as d
 var registeredSensors = {} //keep track of which sensors have been registered as data sources
 var vendor = "Philips Hue";
 
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'jade');
+
 app.set("configured",false)
 
 
@@ -68,22 +66,41 @@ app.get('/ui', function(req, res, next) {
 
     res.send(
       "<h1>Lights</h1><div id='bulbs'><ul>"+bulbList.concat(" \n")+"</ul></div>" +
-      "<h1>Sensors</h1><div id='sensors'><ul>"+sensorsList.concat(" \n")+"</ul></div>"
+      "<h1>Sensors</h1><div id='sensors'><ul>"+sensorsList.concat(" \n")+"</ul></div>" +
+      `
+      <script type="text/javascript">
+          setInterval('window.location.reload()', 5000);
+      </script>
+      `
     );
   } else {
-    console.log("res.render('config', {})");
-    res.render('config', {});
+    res.send(
+      `
+      <html>
+      <head>
+      <link rel='stylesheet', href='/ui/style.css' /)
+      </head>
+      <body>
+      <h1>Enter IP below, then press button on bridge, then click done button below</h1>
+      <form method="post" action="/ui/configure">
+        <input type="text" value="" name="bridge_ip" />
+        <input type="submit", value="Done" />
+      </form>
+      </body>
+      `
+    )
   }
 });
 
-app.post('/ui', function (req, res) {
-    var ip_address = (req.body.title);
+app.post('/ui/configure', function (req, res) {
+    var ip_address = (req.body.bridge_ip);
 
-    console.log(req.body.title);
+    console.log(req.body.bridge_ip);
 
     hue.findHub(ip_address)
     .then((data)=>{
-       res.send(data);
+       app.set("configured",true)
+       res.redirect(302,"/ui")
     })
     .catch((err)=>{
        res.status(401).send("Failed to find hue bridge at " + ip_address + "<b>" + err + "</b>");
