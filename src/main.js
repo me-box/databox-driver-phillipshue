@@ -5,7 +5,9 @@ const bodyParser = require('body-parser');
 const databox = require('node-databox');
 const fs = require('fs');
 
-const DATABOX_ZMQ_ENDPOINT = process.env.DATABOX_ZMQ_ENDPOINT
+const DATABOX_ZMQ_ENDPOINT = process.env.DATABOX_ZMQ_ENDPOINT || "tcp://127.0.0.1:5555";
+const DATABOX_TESTING = !(process.env.DATABOX_VERSION);
+const PORT = process.env.port || '8080';
 
 let tsc = databox.NewTimeSeriesBlobClient(DATABOX_ZMQ_ENDPOINT, false);
 let kvc = databox.NewKeyValueClient(DATABOX_ZMQ_ENDPOINT, false);
@@ -13,13 +15,11 @@ let kvc = databox.NewKeyValueClient(DATABOX_ZMQ_ENDPOINT, false);
 const settingsManager = require('./settings.js')(kvc);
 const hue = require('./hue/hue.js')(settingsManager);
 
-const credentials = databox.getHttpsCredentials();
-
-const PORT = process.env.port || '8080';
 
 const app = express();
 
 const https = require('https');
+const http = require('http');
 
 //some nasty global vars to holds the current state
 var registeredLights = {} //keep track of which lights have been registered as data sources
@@ -47,7 +47,7 @@ app.get('/status', function(req, res, next) {
 
 app.get('/ui', function(req, res, next) {
   if (app.settings.configured) {
-    let bulbList = ""
+    let bulbList = []
     let lights = Object.entries(registeredLights)
     if(lights.length > 0) {
       bulbList = lights.map((bulb)=>{
@@ -56,7 +56,20 @@ app.get('/ui', function(req, res, next) {
     } else {
       bulbList=["<li>No bulbs found!</li>"]
     }
-    res.send("<h1>Lights</h1><div id='bulbs'><ul>"+bulbList.concat(" \n")+"</ul></div>");
+    let sensorsList = []
+    let sensors = Object.entries(registeredSensors)
+    if(sensors.length > 0) {
+      sensorsList = sensors.map((s)=>{
+        return "<li><b>"+ s[1].name + "</b> Last value: <pre>"+JSON.stringify(s[1].state,null,3)+"</pre></li>"
+      });
+    } else {
+      sensorsList=["<li>No sensors found!</li>"]
+    }
+
+    res.send(
+      "<h1>Lights</h1><div id='bulbs'><ul>"+bulbList.concat(" \n")+"</ul></div>" +
+      "<h1>Sensors</h1><div id='sensors'><ul>"+sensorsList.concat(" \n")+"</ul></div>"
+    );
   } else {
     console.log("res.render('config', {})");
     res.render('config', {});
@@ -78,7 +91,16 @@ app.post('/ui', function (req, res) {
 
 });
 
-https.createServer(credentials, app).listen(PORT);
+//when testing, we run as http, (to prevent the need for self-signed certs etc);
+if (DATABOX_TESTING) {
+  console.log("[Creating TEST http server]", PORT);
+  server = http.createServer(app).listen(PORT);
+
+} else {
+  console.log("[Creating https server]", PORT);
+  const credentials = databox.getHttpsCredentials();
+  server = https.createServer(credentials, app).listen(PORT);
+}
 
 module.exports = app;
 
@@ -115,270 +137,192 @@ function ObserveProperty (dsID) {
 
 }
 
-Promise.resolve()
-  .then(()=>{
-    return tsc.RegisterDatasource(
-              {
-              Description: 'Philips hue driver settings',
-              ContentType: 'text/json',
-              Vendor: 'Databox Inc.',
-              DataSourceType: 'philipsHueSettings',
-              DataSourceID: 'philipsHueSettings',
-              StoreType: 'kv',
-            });
+const waitForConfig = async function () {
+
+  await tsc.RegisterDatasource({
+                              Description: 'Philips hue driver settings',
+                              ContentType: 'text/json',
+                              Vendor: 'Databox Inc.',
+                              DataSourceType: 'philipsHueSettings',
+                              DataSourceID: 'philipsHueSettings',
+                              StoreType: 'kv',
+                            });
+  let settings = await settingsManager.getSettings()
+  .catch((err) => {
+    console.log("[waitForConfig] waiting for user configuration. ", err);
+    setTimeout(waitForConfig,5000)
   })
-  .then(()=>{
 
-    return new Promise((resolve,reject)=>{
-      var waitForConfig = function() {
+  if (typeof settings == 'undefined') {
+    //we have no settings do not continue
+    return
+  }
 
-        settingsManager.getSettings()
-          .then((settings)=>{
-            console.log("[SETTINGS] retrieved", settings);
-            resolve(new HueApi(settings.hostname, settings.hash));
-          })
-          .catch((err)=>{
-            console.log("[waitForConfig] waiting for user configuration. ", err);
-            setTimeout(waitForConfig,5000);
-          });
+  app.set("configured",true)
 
-      };
+  startDriverWork(settings)
+}
 
-      waitForConfig();
+const startDriverWork = async function (settings) {
+
+  let hueApi = new HueApi(settings.hostname, settings.hash)
+
+  let lights = await hueApi.lights()
+  .catch((err) => {
+    console.log("[Error] getting light data", err);
+    lights = {"lights":[]}
+  })
+
+  await processlights(lights)
+
+  let sensors = await hueApi.sensors()
+  .catch((err) => {
+    console.log("[Error] getting light data", err);
+    sensors = {"sensors":[]}
+  })
+  await processSensors(sensors)
+
+  //setup next poll
+  //console.log("setting up next poll")
+  setTimeout(startDriverWork,5000,settings);
+
+}
+
+waitForConfig()
+
+const processSensors = async function (sensors) {
+
+  //filter out sensors without an id
+  let validSensors = sensors.sensors.filter((itm)=>{ return itm.uniqueid })
+
+  for ( let i = 0; i< validSensors.length; i++) {
+
+    let sensor = validSensors[i]
+
+    if( !(sensor.uniqueid in registeredSensors)) {
+      //new light found
+      console.log("[NEW SENSOR FOUND] " + formatID(sensor.uniqueid) + " " + sensor.name);
+      registeredSensors[sensor.uniqueid] = sensor;
+
+      //register data sources
+      await tsc.RegisterDatasource({
+        Description: sensor.name + sensor.type,
+        ContentType: 'text/json',
+        Vendor: vendor,
+        DataSourceType: 'hue-'+sensor.type,
+        DataSourceID: 'hue-'+formatID(sensor.uniqueid),
+        StoreType: 'ts'
+      })
+      .catch((error)=>{
+        console.log("[ERROR] register sensor", error);
+      });
+    }
+
+    registeredSensors[sensor.uniqueid] = sensor;
+
+    await tsc.Write('hue-'+formatID(sensor.uniqueid),sensor.state)
+    .catch((error)=>{
+      console.log("[ERROR] writing sensor data", error);
     });
 
-  })
-  .then((hueApi)=>{
+  }
+}
 
-    app.set("configured",true)
+const processlights = async function (lights) {
 
-    //Look for new lights and update light states
-    var infinitePoll = function() {
+  for ( let i = 0; i< lights.lights.length; i++) {
 
-        hueApi.lights()
-        .then((lights)=>{
-           //Update available data sources
-            lights.lights.forEach((light)=>{
+    let light = lights.lights[i]
+    let lightID = light.id
 
-              lightID = light.id
+    if( !(light.uniqueid in registeredLights)) {
+      //new light found
+      console.log("[NEW BULB FOUND] " + light.uniqueid + " " + light.name + " lightID=" + lightID);
+      //build the current state for the UI
+      registeredLights[light.uniqueid] = light;
+      //register data sources
+      await tsc.RegisterDatasource({
+        Description: light.name + ' on off state.',
+        ContentType: 'text/json',
+        Vendor: vendor,
+        DataSourceType: 'bulb-on',
+        DataSourceID: 'bulb-on-' + lightID,
+        StoreType: 'tsblob'
+      })
 
-              if( !(light.uniqueid in registeredLights)) {
-                //new light found
-                console.log("[NEW BULB FOUND] " + light.uniqueid + " " + light.name + " lightID=" + lightID);
-
-                //build the current state for the UI
-                registeredLights[light.uniqueid] = light;
-
-                //register data sources
-                tsc.RegisterDatasource({
-                  Description: light.name + ' on off state.',
-                  ContentType: 'text/json',
-                  Vendor: vendor,
-                  DataSourceType: 'bulb-on',
-                  DataSourceID: 'bulb-on-' + lightID,
-                  StoreType: 'tsblob'
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: light.name + ' hue value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'bulb-hue',
-                    DataSourceID: 'bulb-hue-' + lightID,
-                    StoreType: 'tsblob'
-                  });
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: light.name + ' brightness value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'bulb-bri',
-                    DataSourceID: 'bulb-bri-' + lightID,
-                    StoreType: 'tsblob'
-                  });
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: light.name + ' saturation value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'bulb-sat',
-                    DataSourceID: 'bulb-sat-' + lightID,
-                    StoreType: 'tsblob'
-                  });
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: light.name + ' color temperature value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'bulb-ct',
-                    DataSourceID: 'bulb-ct-' + lightID,
-                    StoreType: 'tsblob'
-                  });
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: 'Set ' + light.name + ' bulbs on off state.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'set-bulb-on',
-                    DataSourceID: 'set-bulb-on-' + lightID,
-                    StoreType: 'tsblob',
-                    IsActuator:true
-                  })
-                  .then(()=>{
-                    return ObserveProperty('set-bulb-on-' + lightID);
-                  })
-                  .catch((err)=>{
-                    console.warn(err)
-                  });
-
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: 'Set ' + light.name + ' hue value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'set-bulb-hue',
-                    DataSourceID: 'set-bulb-hue-' + lightID,
-                    StoreType: 'tsblob',
-                    IsActuator:true
-                  })
-                  .then(()=>{
-                    return ObserveProperty('set-bulb-hue-' + lightID);
-                  });
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description:'Set ' + light.name + ' brightness value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'set-bulb-bri',
-                    DataSourceID: 'set-bulb-bri-' + lightID,
-                    StoreType: 'tsblob',
-                    IsActuator:true
-                  })
-                  .then(()=>{
-                    return ObserveProperty('set-bulb-bri-' + lightID);
-                  });
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: 'Set ' + light.name + ' saturation value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'set-bulb-sat',
-                    DataSourceID: 'set-bulb-sat-' + lightID,
-                    StoreType: 'tsblob',
-                    IsActuator:true
-                  })
-                  .then(()=>{
-                    return ObserveProperty('set-bulb-sat-' + lightID);
-                  });
-                })
-                .then(()=>{
-                  return tsc.RegisterDatasource({
-                    Description: 'Set ' + light.name + ' color temperature value.',
-                    ContentType: 'text/json',
-                    Vendor: vendor,
-                    DataSourceType: 'set-bulb-ct',
-                    DataSourceID: 'set-bulb-ct-' + lightID,
-                    StoreType: 'tsblob',
-                    IsActuator:true
-                  })
-                  .then(()=>{
-                    return ObserveProperty('set-bulb-ct-' + lightID);
-                  });
-                })
-                .catch((err)=>{
-                  console.warn(err);
-                });
-
-              } else {
-
-                //build the current state for the UI
-                registeredLights[light.uniqueid] = light;
-
-                //Update bulb state
-                tsc.Write('bulb-on-'  + lightID, { data:light.state.on })
-               .then(()=>{
-                  return tsc.Write('bulb-hue-' + lightID, { data:light.state.hue });
-                })
-                .then(()=>{
-                  return tsc.Write('bulb-bri-' + lightID, { data:light.state.bri });
-                })
-                .then(()=>{
-                  return tsc.Write('bulb-sat-' + lightID, { data:light.state.sat });
-                })
-                .then(()=>{
-                  return tsc.Write('bulb-ct-'  + lightID, { data:light.state.ct });
-                })
-                .catch((err)=>{
-                  console.log("Error witting to store ", err)
-                })
-
-
-              }
-
-          });
-
-        })
-        .catch((error)=>{
-          console.log("[ERROR]", error);
+      await tsc.RegisterDatasource({
+          Description: light.name + ' hue value.',
+          ContentType: 'text/json',
+          Vendor: vendor,
+          DataSourceType: 'bulb-hue',
+          DataSourceID: 'bulb-hue-' + lightID,
+          StoreType: 'tsblob'
         });
 
-        //deal with sensors
-        function formatID(id) {
-          return id.replace(/\W+/g,"").trim();
-        }
+      await tsc.RegisterDatasource({
+          Description: light.name + ' brightness value.',
+          ContentType: 'text/json',
+          Vendor: vendor,
+          DataSourceType: 'bulb-bri',
+          DataSourceID: 'bulb-bri-' + lightID,
+          StoreType: 'tsblob'
+        });
 
-        hueApi.sensors()
-          .then((sensors)=>{
-            sensors.sensors.filter((itm)=>{ return itm.uniqueid }).forEach((sensor)=>{
+      await tsc.RegisterDatasource({
+          Description: light.name + ' saturation value.',
+          ContentType: 'text/json',
+          Vendor: vendor,
+          DataSourceType: 'bulb-sat',
+          DataSourceID: 'bulb-sat-' + lightID,
+          StoreType: 'tsblob'
+        });
 
-              if( !(sensor.uniqueid in registeredSensors)) {
-                //new light found
-                console.log("[NEW SENSOR FOUND] " + formatID(sensor.uniqueid) + " " + sensor.name);
-                registeredSensors[sensor.uniqueid] = sensor;
+      await tsc.RegisterDatasource({
+          Description: light.name + ' color temperature value.',
+          ContentType: 'text/json',
+          Vendor: vendor,
+          DataSourceType: 'bulb-ct',
+          DataSourceID: 'bulb-ct-' + lightID,
+          StoreType: 'tsblob'
+        });
 
-                //register data sources
-                tsc.RegisterDatasource({
-                  Description: sensor.name + sensor.type,
-                  ContentType: 'text/json',
-                  Vendor: vendor,
-                  DataSourceType: 'hue-'+sensor.type,
-                  DataSourceID: 'hue-'+formatID(sensor.uniqueid),
-                  StoreType: 'ts'
-                })
-                .catch((error)=>{
-                  console.log("[ERROR] register sensor", error);
-                });
-              } else {
+      await tsc.RegisterDatasource({
+          Description: 'Set ' + light.name + ' bulbs on off state.',
+          ContentType: 'text/json',
+          Vendor: vendor,
+          DataSourceType: 'set-bulb-on',
+          DataSourceID: 'set-bulb-on-' + lightID,
+          StoreType: 'tsblob',
+          IsActuator:true
+        })
+    }
 
-                registeredSensors[sensor.uniqueid] = sensor;
+    //Update bulb state
+    console.log("Updating light state", { data:light.state.on })
+    await tsc.Write('bulb-on-'  + lightID, { data:light.state.on })
+    .catch((err) => {
+      console.log("[Error] could not write light data. ", err);
+    })
 
-                // update state
-                tsc.Write('hue-'+formatID(sensor.uniqueid),sensor.state)
-                .catch((error)=>{
-                  console.log("[ERROR] writing sensor data", error);
-                });
-              }
+    await tsc.Write('bulb-hue-' + lightID, { data:light.state.hue })
+    .catch((err) => {
+      console.log("[Error] could not write light data. ", err);
+    })
 
-            })
-          })
-          .catch((error)=>{
-            console.log("[ERROR] Querying sensors", error);
-          });
+    await tsc.Write('bulb-bri-' + lightID, { data:light.state.bri })
+    .catch((err) => {
+      console.log("[Error] could not write light data. ", err);
+    })
 
-        //setup next poll
-        setTimeout(infinitePoll,1000);
-    };
+    await tsc.Write('bulb-sat-' + lightID, { data:light.state.sat })
+    .catch((err) => {
+      console.log("[Error] could not write light data. ", err);
+    })
 
-    infinitePoll();
+    await tsc.Write('bulb-ct-'  + lightID, { data:light.state.ct })
+    .catch((err) => {
+      console.log("[Error] could not write light data. ", err);
+    })
 
-  })
-  .catch((error)=>{
-    console.log("[ERROR]",error);
-  });
+  } //end bulb processing
+}
