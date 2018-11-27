@@ -295,6 +295,13 @@ const processlights = async function (lights) {
           StoreType: 'tsblob',
           IsActuator:true
         })
+
+      //set up the listeners for observe events
+      await ObserveProperty('set-bulb-on-' + lightID)
+      await ObserveProperty('set-bulb-hue-' + lightID)
+      await ObserveProperty('set-bulb-ct-' + lightID)
+      await ObserveProperty('set-bulb-sat-' + lightID)
+      await ObserveProperty('set-bulb-bri-' + lightID)
     }
 
     //Update bulb state
