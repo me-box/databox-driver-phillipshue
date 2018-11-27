@@ -24,7 +24,6 @@
     "modclean": "^2.1.2",
     "node-databox": "^0.9.0",
     "node-hue-api": "^2.4.4",
-    "zeromq": "^4.6.0",
-    "jade": "~1.11.0"
+    "zeromq": "^4.6.0"
   }
 }

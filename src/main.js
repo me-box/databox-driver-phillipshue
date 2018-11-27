@@ -65,7 +65,8 @@ app.get('/ui', function(req, res, next) {
     }
 
     res.send(
-      "<h1>Lights</h1><div id='bulbs'><ul>"+bulbList.concat(" \n")+"</ul></div>" +
+      `<img style="float:right; margin: 10px" src="https://developers.meethue.com/wp-content/themes/hue_developer_theme/img/site_logo.png" />`+
+      "<h1 style='clear:both'>Lights</h1><div id='bulbs'><ul>"+bulbList.concat(" \n")+"</ul></div>" +
       "<h1>Sensors</h1><div id='sensors'><ul>"+sensorsList.concat(" \n")+"</ul></div>" +
       `
       <script type="text/javascript">
@@ -77,15 +78,16 @@ app.get('/ui', function(req, res, next) {
     res.send(
       `
       <html>
-      <head>
-      <link rel='stylesheet', href='/ui/style.css' /)
-      </head>
-      <body>
-      <h1>Enter IP below, then press button on bridge, then click done button below</h1>
-      <form method="post" action="/ui/configure">
-        <input type="text" value="" name="bridge_ip" />
-        <input type="submit", value="Done" />
-      </form>
+      <body style="width:100%">
+      <div style="position: absolute; width:70%; max-width:600px; top: 50%; left: 50%; transform: translate(-50%, -50%)">
+        <img style="float:right" src="https://developers.meethue.com/wp-content/themes/hue_developer_theme/img/site_logo.png" />
+        <h1>Pair your Philips hue bridge</h1>
+        <h3>Enter IP below, then press button on bridge, then click Pair bridge</h3>
+        <form method="post" action="/ui/configure">
+          Enter bridge IP address: <input type="text" value="" name="bridge_ip" />
+          <input type="submit", value="Pair bridge" />
+        </form>
+      </div>
       </body>
       `
     )
