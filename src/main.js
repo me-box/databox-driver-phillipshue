@@ -158,11 +158,13 @@ Promise.resolve()
         hueApi.lights()
         .then((lights)=>{
            //Update available data sources
-            lights.lights.forEach((light, lightID)=>{
+            lights.lights.forEach((light)=>{
+
+              lightID = light.id
 
               if( !(light.uniqueid in registeredLights)) {
                 //new light found
-                console.log("[NEW BULB FOUND] " + light.uniqueid + " " + light.name);
+                console.log("[NEW BULB FOUND] " + light.uniqueid + " " + light.name + " lightID=" + lightID);
 
                 //build the current state for the UI
                 registeredLights[light.uniqueid] = light;
@@ -363,6 +365,7 @@ Promise.resolve()
                   console.log("[ERROR] writing sensor data", error);
                 });
               }
+
             })
           })
           .catch((error)=>{
