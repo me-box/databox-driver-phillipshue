@@ -12,6 +12,11 @@ const PORT = process.env.port || '8080';
 let tsc = databox.NewTimeSeriesBlobClient(DATABOX_ZMQ_ENDPOINT, false);
 let kvc = databox.NewKeyValueClient(DATABOX_ZMQ_ENDPOINT, false);
 
+let basePath = ""
+if (!DATABOX_TESTING) {
+  basePath = "/driver-phillips-hue"
+}
+
 const settingsManager = require('./settings.js')(kvc);
 const hue = require('./hue/hue.js')(settingsManager);
 
@@ -58,7 +63,7 @@ app.get('/ui', function(req, res, next) {
     let sensors = Object.entries(registeredSensors)
     if(sensors.length > 0) {
       sensorsList = sensors.map((s)=>{
-        return "<li><b>"+ s[1].name + "</b> Last value: <pre>"+JSON.stringify(s[1].state,null,3)+"</pre></li>"
+        return "<li><b>"+ s[1].name + "(" + s[1].type + ")</b> Last value: <pre>"+JSON.stringify(s[1].state,null,3)+"</pre></li>"
       });
     } else {
       sensorsList=["<li>No sensors found!</li>"]
@@ -83,7 +88,7 @@ app.get('/ui', function(req, res, next) {
         <img style="float:right" src="https://developers.meethue.com/wp-content/themes/hue_developer_theme/img/site_logo.png" />
         <h1>Pair your Philips hue bridge</h1>
         <h3>Enter IP below, then press button on bridge, then click Pair bridge</h3>
-        <form method="post" action="/ui/configure">
+        <form method="post" action="`+basePath+`/ui/configure">
           Enter bridge IP address: <input type="text" value="" name="bridge_ip" />
           <input type="submit", value="Pair bridge" />
         </form>
@@ -131,7 +136,9 @@ function ObserveProperty (dsID) {
   console.log("[Observing] ",dsID);
 
   //Deal with actuation events
-  return tsc.Observe(dsID)
+  let _tsc = databox.NewTimeSeriesBlobClient(DATABOX_ZMQ_ENDPOINT, false);
+
+  return _tsc.Observe(dsID)
   .then((actuationEmitter)=>{
 
     actuationEmitter.on('data',(JsonObserveResponse)=>{
@@ -169,10 +176,10 @@ const waitForConfig = async function () {
   let settings = await settingsManager.getSettings()
   .catch((err) => {
     console.log("[waitForConfig] waiting for user configuration. ", err);
-    setTimeout(waitForConfig,5000)
   })
 
   if (typeof settings == 'undefined') {
+    setTimeout(waitForConfig,5000)
     //we have no settings do not continue
     return
   }
@@ -182,34 +189,52 @@ const waitForConfig = async function () {
   startDriverWork(settings)
 }
 
+//deal with sensors
+function formatID(id) {
+  return id.replace(/\W+/g,"").trim();
+}
+
 const startDriverWork = async function (settings) {
 
   let hueApi = new HueApi(settings.hostname, settings.hash)
 
-  let lights = await hueApi.lights()
+  let lights = {}
+  lights = await hueApi.lights()
   .catch((err) => {
     console.log("[Error] getting light data", err);
-    lights = {"lights":[]}
   })
-
+  if (typeof(lights) == "undefined") {
+    lights = {"lights":[]}
+  }
   await processlights(lights)
 
-  let sensors = await hueApi.sensors()
+  let sensors = {}
+  sensors = await hueApi.sensors()
   .catch((err) => {
-    console.log("[Error] getting light data", err);
-    sensors = {"sensors":[]}
+    console.log("[Error] getting sensor data", err);
   })
+  if (typeof(sensors) == "undefined") {
+    sensors = {"sensors":[]}
+  }
   await processSensors(sensors)
 
   //setup next poll
-  //console.log("setting up next poll")
-  setTimeout(startDriverWork,5000,settings);
+  console.log("setting up next poll")
+  setTimeout(startDriverWork,3000,settings);
 
 }
 
 waitForConfig()
 
+async function wait(ms) {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
+  });
+}
+
 const processSensors = async function (sensors) {
+
+  let _tsc = databox.NewTimeSeriesBlobClient(DATABOX_ZMQ_ENDPOINT, false);
 
   //filter out sensors without an id
   let validSensors = sensors.sensors.filter((itm)=>{ return itm.uniqueid })
@@ -220,11 +245,10 @@ const processSensors = async function (sensors) {
 
     if( !(sensor.uniqueid in registeredSensors)) {
       //new light found
-      console.log("[NEW SENSOR FOUND] " + formatID(sensor.uniqueid) + " " + sensor.name);
-      registeredSensors[sensor.uniqueid] = sensor;
+      console.log("[NEW SENSOR FOUND] " + formatID(sensor.uniqueid) + " " + sensor.type + " " + sensor.name);
 
       //register data sources
-      await tsc.RegisterDatasource({
+      await _tsc.RegisterDatasource({
         Description: sensor.name + sensor.type,
         ContentType: 'text/json',
         Vendor: vendor,
@@ -239,7 +263,9 @@ const processSensors = async function (sensors) {
 
     registeredSensors[sensor.uniqueid] = sensor;
 
-    await tsc.Write('hue-'+formatID(sensor.uniqueid),sensor.state)
+    console.log("writing sensor data ", i);
+    await wait(100)
+    await writeWithTimeOut(_tsc,'hue-'+formatID(sensor.uniqueid),sensor.state)
     .catch((error)=>{
       console.log("[ERROR] writing sensor data", error);
     });
@@ -249,6 +275,8 @@ const processSensors = async function (sensors) {
 
 const processlights = async function (lights) {
 
+  let _tsc = databox.NewTimeSeriesBlobClient(DATABOX_ZMQ_ENDPOINT, false);
+
   for ( let i = 0; i< lights.lights.length; i++) {
 
     let light = lights.lights[i]
@@ -257,10 +285,9 @@ const processlights = async function (lights) {
     if( !(light.uniqueid in registeredLights)) {
       //new light found
       console.log("[NEW BULB FOUND] " + light.uniqueid + " " + light.name + " lightID=" + lightID);
-      //build the current state for the UI
-      registeredLights[light.uniqueid] = light;
+
       //register data sources
-      await tsc.RegisterDatasource({
+      await _tsc.RegisterDatasource({
         Description: light.name + ' on off state.',
         ContentType: 'text/json',
         Vendor: vendor,
@@ -269,7 +296,7 @@ const processlights = async function (lights) {
         StoreType: 'tsblob'
       })
 
-      await tsc.RegisterDatasource({
+      await _tsc.RegisterDatasource({
           Description: light.name + ' hue value.',
           ContentType: 'text/json',
           Vendor: vendor,
@@ -278,7 +305,7 @@ const processlights = async function (lights) {
           StoreType: 'tsblob'
         });
 
-      await tsc.RegisterDatasource({
+      await _tsc.RegisterDatasource({
           Description: light.name + ' brightness value.',
           ContentType: 'text/json',
           Vendor: vendor,
@@ -287,7 +314,7 @@ const processlights = async function (lights) {
           StoreType: 'tsblob'
         });
 
-      await tsc.RegisterDatasource({
+      await _tsc.RegisterDatasource({
           Description: light.name + ' saturation value.',
           ContentType: 'text/json',
           Vendor: vendor,
@@ -296,7 +323,7 @@ const processlights = async function (lights) {
           StoreType: 'tsblob'
         });
 
-      await tsc.RegisterDatasource({
+      await _tsc.RegisterDatasource({
           Description: light.name + ' color temperature value.',
           ContentType: 'text/json',
           Vendor: vendor,
@@ -305,7 +332,7 @@ const processlights = async function (lights) {
           StoreType: 'tsblob'
         });
 
-      await tsc.RegisterDatasource({
+      await _tsc.RegisterDatasource({
           Description: 'Set ' + light.name + ' bulbs on off state.',
           ContentType: 'text/json',
           Vendor: vendor,
@@ -323,32 +350,56 @@ const processlights = async function (lights) {
       await ObserveProperty('set-bulb-bri-' + lightID)
     }
 
+    //build the current state for the UI
+    registeredLights[light.uniqueid] = light;
+
     //Update bulb state
     console.log("Updating light state", { data:light.state.on })
-    await tsc.Write('bulb-on-'  + lightID, { data:light.state.on })
+    await wait(100)
+    await writeWithTimeOut(_tsc,'bulb-on-'  + lightID, { data:light.state.on })
     .catch((err) => {
       console.log("[Error] could not write light data. ", err);
     })
 
-    await tsc.Write('bulb-hue-' + lightID, { data:light.state.hue })
+    console.log("Updating light 2")
+    await wait(100)
+    await writeWithTimeOut(_tsc,'bulb-hue-' + lightID, { data:light.state.hue })
     .catch((err) => {
       console.log("[Error] could not write light data. ", err);
     })
 
-    await tsc.Write('bulb-bri-' + lightID, { data:light.state.bri })
+    console.log("Updating light 3")
+    await wait(100)
+    await writeWithTimeOut(_tsc,'bulb-bri-' + lightID, { data:light.state.bri })
     .catch((err) => {
       console.log("[Error] could not write light data. ", err);
     })
 
-    await tsc.Write('bulb-sat-' + lightID, { data:light.state.sat })
+    console.log("Updating light 4")
+    await wait(100)
+    await writeWithTimeOut(_tsc,'bulb-sat-' + lightID, { data:light.state.sat })
     .catch((err) => {
       console.log("[Error] could not write light data. ", err);
     })
 
-    await tsc.Write('bulb-ct-'  + lightID, { data:light.state.ct })
+    console.log("Updating light 5")
+    await wait(100)
+    await writeWithTimeOut(_tsc,'bulb-ct-'  + lightID, { data:light.state.ct })
     .catch((err) => {
       console.log("[Error] could not write light data. ", err);
     })
 
   } //end bulb processing
+}
+
+async function writeWithTimeOut(tsc,dsid,data) {
+  return new Promise (async (resolve)=>{
+    let cancelled = false
+    setTimeout(function () {cancelled = true; resolve();}, 1000)
+
+    await tsc.Write(dsid , data)
+    if (!cancelled) {
+      resolve()
+    }
+  })
 }
